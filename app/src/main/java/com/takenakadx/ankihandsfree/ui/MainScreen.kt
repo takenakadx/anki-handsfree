@@ -2,9 +2,10 @@ package com.takenakadx.ankihandsfree.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -13,13 +14,13 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -36,6 +37,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,7 +58,8 @@ data class PermissionState(
     val ankiGranted: Boolean = false,
     val micGranted: Boolean = false,
 ) {
-    val allReady: Boolean get() = ankiInstalled && ankiGranted && micGranted
+    /** マイクは音声コマンドを使うときだけ必要 */
+    val allReady: Boolean get() = ankiInstalled && ankiGranted
 }
 
 @Composable
@@ -62,6 +67,7 @@ fun MainScreen(
     viewModel: ReviewViewModel,
     permissions: PermissionState,
     onRequestPermissions: () -> Unit,
+    onRequestMic: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -74,6 +80,8 @@ fun MainScreen(
                     onReload = viewModel::loadDecks,
                     onStart = viewModel::start,
                     onSettings = viewModel::updateSettings,
+                    micGranted = permissions.micGranted,
+                    onRequestMic = onRequestMic,
                 )
                 else -> ReviewScreen(state, onCommand = viewModel::sendCommand)
             }
@@ -85,10 +93,9 @@ fun MainScreen(
 private fun PermissionScreen(p: PermissionState, onRequest: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Anki ハンズフリー", style = MaterialTheme.typography.headlineMedium)
-        Text("AnkiDroid のカードを読み上げ、声で評価できます。使うには次の準備が必要です。")
+        Text("AnkiDroid のカードを読み上げ、画面の大きなボタンで評価できます。使うには次の準備が必要です。")
         Check("AnkiDroid がインストールされている", p.ankiInstalled)
         Check("AnkiDroid のデータへのアクセス許可", p.ankiGranted)
-        Check("マイクの使用許可", p.micGranted)
         if (p.ankiInstalled) {
             Button(onClick = onRequest) { Text("許可する") }
         } else {
@@ -109,6 +116,8 @@ private fun HomeScreen(
     onReload: () -> Unit,
     onStart: () -> Unit,
     onSettings: ((Settings) -> Settings) -> Unit,
+    micGranted: Boolean,
+    onRequestMic: () -> Unit,
 ) {
     var showSettings by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -122,7 +131,7 @@ private fun HomeScreen(
             Text("おつかれさまでした！ ${state.reviewedCount} 枚学習しました。")
         }
         if (showSettings) {
-            SettingsPanel(state.settings, onSettings)
+            SettingsPanel(state.settings, onSettings, micGranted, onRequestMic)
         } else {
             LazyColumn(Modifier.weight(1f, fill = false)) {
                 items(state.decks, key = { it.id }) { deck ->
@@ -144,42 +153,60 @@ private fun HomeScreen(
             onClick = onStart,
             enabled = state.selectedDeckId >= 0,
             modifier = Modifier.fillMaxWidth().height(64.dp),
-        ) { Text("🎧 ハンズフリー学習を開始", fontSize = 18.sp) }
+        ) { Text("🎧 学習を開始", fontSize = 18.sp) }
         Text(
-            "話しかけ方: 「答え」で裏面、「もう一度 / 難しい / 正解 / 簡単」で評価、" +
-                "「繰り返して」で再読み上げ、「終了」で終わります。",
+            "問題が読み上げられたら、画面のどこかをタップすると答えを読み上げます。" +
+                "答えの後は 4 つの大きなボタンで評価します。読み上げ中でもタップできます。",
             style = MaterialTheme.typography.bodySmall,
         )
     }
 }
 
 @Composable
-private fun SettingsPanel(s: Settings, onChange: ((Settings) -> Settings) -> Unit) {
+private fun SettingsPanel(
+    s: Settings,
+    onChange: ((Settings) -> Settings) -> Unit,
+    micGranted: Boolean,
+    onRequestMic: () -> Unit,
+) {
     Column(
         Modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         LanguagePicker("問題の読み上げ言語", s.questionLanguage) { l -> onChange { it.copy(questionLanguage = l) } }
         LanguagePicker("答えの読み上げ言語", s.answerLanguage) { l -> onChange { it.copy(answerLanguage = l) } }
-        LanguagePicker("音声コマンドの言語", s.commandLanguage) { l -> onChange { it.copy(commandLanguage = l) } }
         Text("読み上げ速度: ${"%.1f".format(s.speechRate)}x")
         Slider(
             value = s.speechRate,
             onValueChange = { v -> onChange { it.copy(speechRate = (v * 10).roundToInt() / 10f) } },
             valueRange = 0.5f..2.0f,
         )
-        SwitchRow("無言なら自動で答えを読み上げる", s.autoReveal) { v -> onChange { it.copy(autoReveal = v) } }
+        SwitchRow("操作しなければ自動で答えを読み上げる", s.autoReveal) { v -> onChange { it.copy(autoReveal = v) } }
         if (s.autoReveal) {
-            Text("考える時間: 聞き取り ${s.thinkListens} 回分（約 ${s.thinkListens * 5} 秒）")
+            Text("考える時間: ${s.thinkSeconds} 秒")
             Slider(
-                value = s.thinkListens.toFloat(),
-                onValueChange = { v -> onChange { it.copy(thinkListens = v.roundToInt()) } },
-                valueRange = 1f..5f,
-                steps = 3,
+                value = s.thinkSeconds.toFloat(),
+                onValueChange = { v -> onChange { it.copy(thinkSeconds = v.roundToInt()) } },
+                valueRange = 2f..20f,
+                steps = 17,
             )
         }
-        SwitchRow("評価を復唱する", s.confirmGrade) { v -> onChange { it.copy(confirmGrade = v) } }
+        SwitchRow("評価を読み上げて確認する", s.confirmGrade) { v -> onChange { it.copy(confirmGrade = v) } }
         HorizontalDivider()
+        SwitchRow("音声コマンドも使う", s.voiceCommands) { v ->
+            if (v && !micGranted) onRequestMic()
+            onChange { it.copy(voiceCommands = v) }
+        }
+        if (s.voiceCommands) {
+            LanguagePicker("音声コマンドの言語", s.commandLanguage) { l -> onChange { it.copy(commandLanguage = l) } }
+            Text(
+                "「答え」で裏面、「もう一度 / 難しい / 正解 / 簡単」で評価、「繰り返して」で再読み上げ、「終了」で終わります。",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (!micGranted) {
+                Text("マイクの許可が必要です", color = MaterialTheme.colorScheme.error)
+            }
+        }
     }
 }
 
@@ -207,54 +234,105 @@ private fun LanguagePicker(label: String, value: SpeechLanguage, onSelect: (Spee
 
 @Composable
 private fun ReviewScreen(state: UiState, onCommand: (VoiceCommand) -> Unit) {
+    val haptic = LocalHapticFeedback.current
+    val send: (VoiceCommand) -> Unit = { cmd ->
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        onCommand(cmd)
+    }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("学習済み ${state.reviewedCount} 枚", Modifier.weight(1f))
-            Text(
-                when {
-                    state.listening -> "🎙️ 聞いています…"
-                    state.phase == Phase.LOADING -> "読み込み中…"
-                    else -> "🔊 読み上げ中"
-                },
-                fontWeight = FontWeight.Bold,
-            )
+            when {
+                state.listening -> Text("🎙️ 聞いています…", fontWeight = FontWeight.Bold)
+                state.phase == Phase.LOADING -> Text("読み込み中…")
+            }
         }
-        Card(Modifier.fillMaxWidth().weight(1f)) {
+        Card(Modifier.fillMaxWidth().weight(0.4f)) {
             Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
-                Text(state.question, fontSize = 24.sp)
+                Text(state.question, fontSize = 22.sp)
                 if (state.phase == Phase.ANSWER) {
                     HorizontalDivider(Modifier.padding(vertical = 12.dp))
-                    Text(state.answer, fontSize = 22.sp, color = MaterialTheme.colorScheme.primary)
+                    Text(state.answer, fontSize = 20.sp, color = MaterialTheme.colorScheme.primary)
                 }
             }
         }
         if (state.heard.isNotBlank()) {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-                Text("「${state.heard}」", Modifier.padding(8.dp))
-            }
+            Text("「${state.heard}」", style = MaterialTheme.typography.bodySmall)
         }
         state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
-        // 音声が使いにくい場面のための手動ボタン
-        if (state.phase == Phase.QUESTION) {
-            Button(onClick = { onCommand(VoiceCommand.ShowAnswer) }, Modifier.fillMaxWidth().height(56.dp)) {
-                Text("答えを見る")
-            }
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Grade.entries.forEach { g ->
-                    FilledTonalButton(
-                        onClick = { onCommand(VoiceCommand.Answer(g)) },
-                        modifier = Modifier.weight(1f).height(56.dp),
-                        enabled = state.phase == Phase.ANSWER,
-                    ) { Text(g.label, fontSize = 13.sp) }
-                }
+        // 画面を見なくても押せるよう、画面の大部分をボタンにする
+        Box(Modifier.fillMaxWidth().weight(0.6f)) {
+            when (state.phase) {
+                Phase.ANSWER -> GradeGrid(onGrade = { send(VoiceCommand.Answer(it)) })
+                else -> BigButton(
+                    label = "答えを見る",
+                    sub = "タップで答えを読み上げ",
+                    color = MaterialTheme.colorScheme.primary,
+                    enabled = state.phase == Phase.QUESTION,
+                    modifier = Modifier.fillMaxSize(),
+                    onClick = { send(VoiceCommand.ShowAnswer) },
+                )
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { onCommand(VoiceCommand.Repeat) }, Modifier.weight(1f)) { Text("もう一度読む") }
-            OutlinedButton(onClick = { onCommand(VoiceCommand.Stop) }, Modifier.weight(1f)) { Text("終了") }
+            OutlinedButton(onClick = { send(VoiceCommand.Repeat) }, Modifier.weight(1f).height(56.dp)) {
+                Text("🔁 もう一度読む")
+            }
+            OutlinedButton(onClick = { send(VoiceCommand.Stop) }, Modifier.weight(1f).height(56.dp)) {
+                Text("⏹ 終了")
+            }
         }
-        Spacer(Modifier.height(4.dp))
+    }
+}
+
+/** 2×2 の評価ボタン。位置で覚えられるよう Anki と同じ並び（左上から もう一度・難しい・正解・簡単）。 */
+@Composable
+private fun GradeGrid(onGrade: (Grade) -> Unit) {
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(listOf(Grade.AGAIN, Grade.HARD), listOf(Grade.GOOD, Grade.EASY)).forEach { row ->
+            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { g ->
+                    BigButton(
+                        label = g.label,
+                        sub = null,
+                        color = gradeColor(g),
+                        enabled = true,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        onClick = { onGrade(g) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun gradeColor(g: Grade): Color = when (g) {
+    Grade.AGAIN -> Color(0xFFC62828)
+    Grade.HARD -> Color(0xFFEF6C00)
+    Grade.GOOD -> Color(0xFF2E7D32)
+    Grade.EASY -> Color(0xFF1565C0)
+}
+
+@Composable
+private fun BigButton(
+    label: String,
+    sub: String?,
+    color: Color,
+    enabled: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        shape = RoundedCornerShape(20.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = color, contentColor = Color.White),
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(label, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+            if (sub != null) Text(sub, fontSize = 14.sp)
+        }
     }
 }

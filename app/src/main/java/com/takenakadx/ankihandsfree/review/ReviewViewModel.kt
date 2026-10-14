@@ -1,6 +1,9 @@
 package com.takenakadx.ankihandsfree.review
 
+import android.Manifest
 import android.app.Application
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.takenakadx.ankihandsfree.anki.AnkiDroidRepository
@@ -14,14 +17,17 @@ import com.takenakadx.ankihandsfree.voice.VoiceCommandParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeoutOrNull
 
 enum class Phase { IDLE, LOADING, QUESTION, ANSWER, FINISHED }
 
@@ -55,6 +61,10 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
 
     val isAnkiDroidInstalled: Boolean get() = repo.isAnkiDroidInstalled()
     val hasAnkiPermission: Boolean get() = repo.hasPermission()
+
+    private fun hasMicPermission(): Boolean =
+        ContextCompat.checkSelfPermission(getApplication(), Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
 
     fun loadDecks() {
         viewModelScope.launch {
@@ -95,7 +105,7 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
         if (session?.isActive == true) return
         val deckId = _state.value.selectedDeckId
         if (deckId < 0) return
-        while (manualCommands.tryReceive().isSuccess) Unit
+        drainManualCommands()
         _state.update { it.copy(phase = Phase.LOADING, reviewedCount = 0, message = null, heard = "") }
         session = viewModelScope.launch {
             try {
@@ -103,7 +113,11 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
                     _state.update { it.copy(message = "読み上げエンジンを初期化できませんでした") }
                     return@launch
                 }
-                if (!listener.isAvailable()) {
+                if (_state.value.settings.voiceCommands && !hasMicPermission()) {
+                    _state.update { it.copy(message = "音声コマンドを使うにはマイクの許可が必要です") }
+                    return@launch
+                }
+                if (_state.value.settings.voiceCommands && !listener.isAvailable()) {
                     _state.update { it.copy(message = "この端末では音声認識が使えません") }
                     return@launch
                 }
@@ -143,41 +157,34 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
             val answer = CardText.toSpeech(content.answerHtml, blankWord(cfg().answerLanguage))
             val startedAt = System.currentTimeMillis()
 
+            // 前のカードで連打されたボタンを次のカードに持ち越さない
+            drainManualCommands()
+
             // ---- 表面 ----
             _state.update { it.copy(phase = Phase.QUESTION, question = question, answer = answer) }
-            speaker.speak(question, cfg().questionLanguage.locale, cfg().speechRate)
             var grade: Grade? = null
-            var silent = 0
+            var speakText: String? = question
             questionLoop@ while (true) {
-                when (val cmd = awaitCommand()) {
+                val timeout = if (cfg().autoReveal) cfg().thinkSeconds * 1000L else null
+                when (val cmd = speakAndAwait(speakText, cfg().questionLanguage, timeout)) {
                     VoiceCommand.ShowAnswer -> break@questionLoop
-                    VoiceCommand.Repeat -> speaker.speak(question, cfg().questionLanguage.locale, cfg().speechRate)
+                    VoiceCommand.Repeat -> speakText = question
                     VoiceCommand.Stop -> return say("終了します。")
                     is VoiceCommand.Answer -> { grade = cmd.grade; break@questionLoop }
-                    null -> {
-                        silent++
-                        if (cfg().autoReveal && silent >= cfg().thinkListens) break@questionLoop
-                        if (silent >= MAX_SILENT_LISTENS) return pause()
-                    }
+                    null -> if (cfg().autoReveal) break@questionLoop else return pause()
                 }
             }
 
             // ---- 裏面 ----
             if (grade == null) {
                 _state.update { it.copy(phase = Phase.ANSWER) }
-                speaker.speak(answer, cfg().answerLanguage.locale, cfg().speechRate)
-                silent = 0
+                speakText = answer
                 answerLoop@ while (true) {
-                    when (val cmd = awaitCommand()) {
+                    when (val cmd = speakAndAwait(speakText, cfg().answerLanguage, null)) {
                         is VoiceCommand.Answer -> { grade = cmd.grade; break@answerLoop }
-                        VoiceCommand.Repeat, VoiceCommand.ShowAnswer ->
-                            speaker.speak(answer, cfg().answerLanguage.locale, cfg().speechRate)
+                        VoiceCommand.Repeat, VoiceCommand.ShowAnswer -> speakText = answer
                         VoiceCommand.Stop -> return say("終了します。")
-                        null -> {
-                            silent++
-                            if (silent >= MAX_SILENT_LISTENS) return pause()
-                            if (silent % 2 == 0) say("評価をどうぞ。もう一度、難しい、正解、簡単。")
-                        }
+                        null -> return pause()
                     }
                 }
             }
@@ -186,6 +193,10 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
             if (cfg().confirmGrade) say(g.label)
             answerCard(card, g, System.currentTimeMillis() - startedAt)
         }
+    }
+
+    private fun drainManualCommands() {
+        while (manualCommands.tryReceive().isSuccess) Unit
     }
 
     private suspend fun answerCard(card: DueCard, grade: Grade, elapsedMs: Long) {
@@ -202,27 +213,44 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 音声 1 回分の聞き取りと、画面ボタンからの入力のどちらか早い方を待つ。
-     * 何も認識できなかった場合は null。
+     * [text] を読み上げ（null なら読み上げない）、その後の入力を待つ。
+     * 画面のボタンは読み上げ中でも受け付け、押されたら読み上げを止めてすぐ返す。
+     *
+     * - ボタンのみ: [timeoutMs] が null ならボタンが押されるまで待ち続ける。経過したら null。
+     * - 音声コマンドあり: 聞き取りを繰り返し、[timeoutMs]（null なら [VOICE_IDLE_LIMIT_MS]）経過で null。
      */
-    private suspend fun awaitCommand(): VoiceCommand? = coroutineScope {
-        _state.update { it.copy(listening = true, heard = "") }
-        val voice = async {
-            listener.listen(_state.value.settings.commandLanguage.locale) { partial ->
-                _state.update { it.copy(heard = partial) }
-            }
-        }
-        try {
-            select {
-                manualCommands.onReceive { it }
-                voice.onAwait { candidates ->
-                    candidates.firstOrNull()?.let { heard -> _state.update { it.copy(heard = heard) } }
-                    VoiceCommandParser.parse(candidates)
+    private suspend fun speakAndAwait(text: String?, language: SpeechLanguage, timeoutMs: Long?): VoiceCommand? =
+        coroutineScope {
+            val afterSpeech = async {
+                if (text != null) speaker.speak(text, language.locale, _state.value.settings.speechRate)
+                if (_state.value.settings.voiceCommands) {
+                    withTimeoutOrNull(timeoutMs ?: VOICE_IDLE_LIMIT_MS) { listenUntilCommand() }
+                } else if (timeoutMs != null) {
+                    delay(timeoutMs)
+                    null
+                } else {
+                    awaitCancellation()
                 }
             }
-        } finally {
-            voice.cancel()
-            _state.update { it.copy(listening = false) }
+            try {
+                select {
+                    manualCommands.onReceive { it }
+                    afterSpeech.onAwait { it }
+                }
+            } finally {
+                afterSpeech.cancel()
+                _state.update { it.copy(listening = false) }
+            }
+        }
+
+    private suspend fun listenUntilCommand(): VoiceCommand {
+        while (true) {
+            _state.update { it.copy(listening = true, heard = "") }
+            val candidates = listener.listen(_state.value.settings.commandLanguage.locale) { partial ->
+                _state.update { it.copy(heard = partial) }
+            }
+            candidates.firstOrNull()?.let { heard -> _state.update { it.copy(heard = heard) } }
+            VoiceCommandParser.parse(candidates)?.let { return it }
         }
     }
 
@@ -235,7 +263,7 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
-        /** これだけ連続で無反応なら一時停止する（1 回 ≒ 5〜10 秒） */
-        const val MAX_SILENT_LISTENS = 6
+        /** 音声コマンド使用時、これだけ無反応なら一時停止する */
+        const val VOICE_IDLE_LIMIT_MS = 60_000L
     }
 }

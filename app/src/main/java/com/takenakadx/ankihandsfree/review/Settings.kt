@@ -18,13 +18,15 @@ data class Settings(
     val questionLanguage: SpeechLanguage = SpeechLanguage.ENGLISH,
     /** 裏面（答え）を読み上げる言語 */
     val answerLanguage: SpeechLanguage = SpeechLanguage.JAPANESE,
+    /** 画面のボタンに加えて、音声コマンドでも操作する */
+    val voiceCommands: Boolean = false,
     /** 音声コマンドを聞き取る言語 */
     val commandLanguage: SpeechLanguage = SpeechLanguage.JAPANESE,
     val speechRate: Float = 1.0f,
-    /** 問題の後、一定時間無言なら自動で答えを読み上げる */
-    val autoReveal: Boolean = true,
-    /** 自動で答えを出すまでの聞き取り回数（1 回 ≒ 5 秒） */
-    val thinkListens: Int = 1,
+    /** 問題を読み上げた後、一定時間操作がなければ自動で答えを読み上げる */
+    val autoReveal: Boolean = false,
+    /** 自動で答えを出すまでの秒数 */
+    val thinkSeconds: Int = 8,
     /** 評価を聞き取ったら「正解」などと復唱する */
     val confirmGrade: Boolean = true,
 )
@@ -37,10 +39,11 @@ class SettingsStore(context: Context) {
         return Settings(
             questionLanguage = lang("questionLanguage", d.questionLanguage),
             answerLanguage = lang("answerLanguage", d.answerLanguage),
+            voiceCommands = prefs.getBoolean("voiceCommands", d.voiceCommands),
             commandLanguage = lang("commandLanguage", d.commandLanguage),
             speechRate = prefs.getFloat("speechRate", d.speechRate),
             autoReveal = prefs.getBoolean("autoReveal", d.autoReveal),
-            thinkListens = prefs.getInt("thinkListens", d.thinkListens),
+            thinkSeconds = prefs.getInt("thinkSeconds", d.thinkSeconds),
             confirmGrade = prefs.getBoolean("confirmGrade", d.confirmGrade),
         )
     }
@@ -49,10 +52,11 @@ class SettingsStore(context: Context) {
         prefs.edit()
             .putString("questionLanguage", s.questionLanguage.name)
             .putString("answerLanguage", s.answerLanguage.name)
+            .putBoolean("voiceCommands", s.voiceCommands)
             .putString("commandLanguage", s.commandLanguage.name)
             .putFloat("speechRate", s.speechRate)
             .putBoolean("autoReveal", s.autoReveal)
-            .putInt("thinkListens", s.thinkListens)
+            .putInt("thinkSeconds", s.thinkSeconds)
             .putBoolean("confirmGrade", s.confirmGrade)
             .apply()
     }

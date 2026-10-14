@@ -36,7 +36,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         refreshPermissions()
 
-        // 学習中は画面を消さない（ハンズフリー中に録音が止まらないように）
+        // 学習中は画面を消さない（ボタンをいつでも押せるように）
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.state.collect { s ->
@@ -56,9 +56,10 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     permissions = permissionState,
                     onRequestPermissions = {
-                        permissionLauncher.launch(
-                            arrayOf(FlashCardsContract.READ_WRITE_PERMISSION, Manifest.permission.RECORD_AUDIO)
-                        )
+                        permissionLauncher.launch(arrayOf(FlashCardsContract.READ_WRITE_PERMISSION))
+                    },
+                    onRequestMic = {
+                        permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
                     },
                 )
             }
@@ -72,7 +73,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        // バックグラウンドではマイクが使えないため学習を止める
+        // 画面が見えないところで勝手に進まないよう、アプリを離れたら学習を止める
         if (!isChangingConfigurations) viewModel.stop()
     }
 
