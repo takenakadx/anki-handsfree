@@ -101,6 +101,28 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 学習中かつ設定が ON なら、音量ボタンを操作に使う */
+    val volumeKeysActive: Boolean
+        get() = _state.value.settings.volumeKeys && session?.isActive == true
+
+    /**
+     * 音量ボタンによる操作。操作として受け付けたら true。
+     *
+     * - 問題: 上下どちらでも「答えを見る」
+     * - 答え: 上 = 正解 / 下 = もう一度
+     *
+     * 読み込み中・評価の読み上げ中は無視する（次のカードに持ち越さない）。
+     */
+    fun onVolumeKey(up: Boolean): Boolean {
+        val command = when (_state.value.phase) {
+            Phase.QUESTION -> VoiceCommand.ShowAnswer
+            Phase.ANSWER -> VoiceCommand.Answer(if (up) Grade.GOOD else Grade.AGAIN)
+            else -> return false
+        }
+        sendCommand(command)
+        return true
+    }
+
     fun start() {
         if (session?.isActive == true) return
         val deckId = _state.value.selectedDeckId

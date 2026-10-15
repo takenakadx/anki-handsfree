@@ -18,6 +18,8 @@ data class Settings(
     val questionLanguage: SpeechLanguage = SpeechLanguage.ENGLISH,
     /** 裏面（答え）を読み上げる言語 */
     val answerLanguage: SpeechLanguage = SpeechLanguage.JAPANESE,
+    /** 学習中は音量ボタンで操作する（上: 答え → 正解 / 下: もう一度） */
+    val volumeKeys: Boolean = true,
     /** 画面のボタンに加えて、音声コマンドでも操作する */
     val voiceCommands: Boolean = false,
     /** 音声コマンドを聞き取る言語 */
@@ -39,6 +41,7 @@ class SettingsStore(context: Context) {
         return Settings(
             questionLanguage = lang("questionLanguage", d.questionLanguage),
             answerLanguage = lang("answerLanguage", d.answerLanguage),
+            volumeKeys = prefs.getBoolean("volumeKeys", d.volumeKeys),
             voiceCommands = prefs.getBoolean("voiceCommands", d.voiceCommands),
             commandLanguage = lang("commandLanguage", d.commandLanguage),
             speechRate = prefs.getFloat("speechRate", d.speechRate),
@@ -52,6 +55,7 @@ class SettingsStore(context: Context) {
         prefs.edit()
             .putString("questionLanguage", s.questionLanguage.name)
             .putString("answerLanguage", s.answerLanguage.name)
+            .putBoolean("volumeKeys", s.volumeKeys)
             .putBoolean("voiceCommands", s.voiceCommands)
             .putString("commandLanguage", s.commandLanguage.name)
             .putFloat("speechRate", s.speechRate)

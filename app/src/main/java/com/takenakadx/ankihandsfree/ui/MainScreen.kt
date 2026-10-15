@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -155,8 +157,8 @@ private fun HomeScreen(
             modifier = Modifier.fillMaxWidth().height(64.dp),
         ) { Text("🎧 学習を開始", fontSize = 18.sp) }
         Text(
-            "問題が読み上げられたら、画面のどこかをタップすると答えを読み上げます。" +
-                "答えの後は 4 つの大きなボタンで評価します。読み上げ中でもタップできます。",
+            "問題が読み上げられたら、画面をタップするか音量ボタンで答えを読み上げます。" +
+                "答えの後は、音量 ＋ で正解、音量 − でもう一度（画面のボタンでも評価できます）。",
             style = MaterialTheme.typography.bodySmall,
         )
     }
@@ -190,6 +192,9 @@ private fun SettingsPanel(
                 valueRange = 2f..20f,
                 steps = 17,
             )
+        }
+        SwitchRow("音量ボタンで操作する（上: 答え → 正解 / 下: もう一度）", s.volumeKeys) { v ->
+            onChange { it.copy(volumeKeys = v) }
         }
         SwitchRow("評価を読み上げて確認する", s.confirmGrade) { v -> onChange { it.copy(confirmGrade = v) } }
         HorizontalDivider()
@@ -239,72 +244,84 @@ private fun ReviewScreen(state: UiState, onCommand: (VoiceCommand) -> Unit) {
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         onCommand(cmd)
     }
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val volumeHint = state.settings.volumeKeys
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        // 上部: 状態と小さな操作ボタン（誤タップしにくいよう小さく端に置く）
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("学習済み ${state.reviewedCount} 枚", Modifier.weight(1f))
-            when {
-                state.listening -> Text("🎙️ 聞いています…", fontWeight = FontWeight.Bold)
-                state.phase == Phase.LOADING -> Text("読み込み中…")
-            }
+            Text("学習済み ${state.reviewedCount} 枚", style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.weight(1f))
+            if (state.listening) Text("🎙️", Modifier.padding(end = 8.dp))
+            TextButton(onClick = { send(VoiceCommand.Repeat) }) { Text("🔁 再読") }
+            TextButton(onClick = { send(VoiceCommand.Stop) }) { Text("⏹ 終了") }
         }
-        Card(Modifier.fillMaxWidth().weight(0.4f)) {
-            Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
-                Text(state.question, fontSize = 22.sp)
-                if (state.phase == Phase.ANSWER) {
-                    HorizontalDivider(Modifier.padding(vertical = 12.dp))
-                    Text(state.answer, fontSize = 20.sp, color = MaterialTheme.colorScheme.primary)
+
+        // カードの文字は小さめに（確認用）
+        Card(Modifier.fillMaxWidth().weight(0.22f)) {
+            Column(Modifier.padding(12.dp).verticalScroll(rememberScrollState())) {
+                if (state.phase == Phase.LOADING) {
+                    Text("読み込み中…", style = MaterialTheme.typography.bodyMedium)
+                } else {
+                    Text(state.question, fontSize = 17.sp)
+                    if (state.phase == Phase.ANSWER) {
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                        Text(state.answer, fontSize = 17.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                if (state.heard.isNotBlank()) {
+                    Text("「${state.heard}」", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
-        if (state.heard.isNotBlank()) {
-            Text("「${state.heard}」", style = MaterialTheme.typography.bodySmall)
-        }
         state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
-        // 画面を見なくても押せるよう、画面の大部分をボタンにする
-        Box(Modifier.fillMaxWidth().weight(0.6f)) {
-            when (state.phase) {
-                Phase.ANSWER -> GradeGrid(onGrade = { send(VoiceCommand.Answer(it)) })
-                else -> BigButton(
+        // 画面の残り全体をタップ領域にする
+        Box(Modifier.fillMaxWidth().weight(0.78f)) {
+            if (state.phase == Phase.ANSWER) {
+                GradeZones(volumeHint, onGrade = { send(VoiceCommand.Answer(it)) })
+            } else {
+                BigButton(
                     label = "答えを見る",
-                    sub = "タップで答えを読み上げ",
+                    sub = if (volumeHint) "画面をタップ / 音量ボタン" else "画面をタップ",
                     color = MaterialTheme.colorScheme.primary,
                     enabled = state.phase == Phase.QUESTION,
                     modifier = Modifier.fillMaxSize(),
+                    labelSize = 36,
                     onClick = { send(VoiceCommand.ShowAnswer) },
                 )
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { send(VoiceCommand.Repeat) }, Modifier.weight(1f).height(56.dp)) {
-                Text("🔁 もう一度読む")
-            }
-            OutlinedButton(onClick = { send(VoiceCommand.Stop) }, Modifier.weight(1f).height(56.dp)) {
-                Text("⏹ 終了")
             }
         }
     }
 }
 
-/** 2×2 の評価ボタン。位置で覚えられるよう Anki と同じ並び（左上から もう一度・難しい・正解・簡単）。 */
+/**
+ * 評価のタップ領域。よく使う「もう一度」「正解」を大きく、「難しい」「簡単」を小さく配置する。
+ * 左右の位置は音量ボタン（下 = もう一度 / 上 = 正解）と揃えている。
+ */
 @Composable
-private fun GradeGrid(onGrade: (Grade) -> Unit) {
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(listOf(Grade.AGAIN, Grade.HARD), listOf(Grade.GOOD, Grade.EASY)).forEach { row ->
-            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                row.forEach { g ->
-                    BigButton(
-                        label = g.label,
-                        sub = null,
-                        color = gradeColor(g),
-                        enabled = true,
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                        onClick = { onGrade(g) },
-                    )
-                }
-            }
+private fun GradeZones(volumeHint: Boolean, onGrade: (Grade) -> Unit) {
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.weight(2f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            GradeButton(Grade.AGAIN, if (volumeHint) "音量 −" else null, 34, onGrade)
+            GradeButton(Grade.GOOD, if (volumeHint) "音量 ＋" else null, 34, onGrade)
+        }
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            GradeButton(Grade.HARD, null, 24, onGrade)
+            GradeButton(Grade.EASY, null, 24, onGrade)
         }
     }
+}
+
+@Composable
+private fun RowScope.GradeButton(grade: Grade, sub: String?, labelSize: Int, onGrade: (Grade) -> Unit) {
+    BigButton(
+        label = grade.label,
+        sub = sub,
+        color = gradeColor(grade),
+        enabled = true,
+        modifier = Modifier.weight(1f).fillMaxHeight(),
+        labelSize = labelSize,
+        onClick = { onGrade(grade) },
+    )
 }
 
 private fun gradeColor(g: Grade): Color = when (g) {
@@ -321,17 +338,18 @@ private fun BigButton(
     color: Color,
     enabled: Boolean,
     modifier: Modifier,
+    labelSize: Int = 30,
     onClick: () -> Unit,
 ) {
     Button(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier,
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = ButtonDefaults.buttonColors(containerColor = color, contentColor = Color.White),
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(label, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+            Text(label, fontSize = labelSize.sp, fontWeight = FontWeight.Bold)
             if (sub != null) Text(sub, fontSize = 14.sp)
         }
     }

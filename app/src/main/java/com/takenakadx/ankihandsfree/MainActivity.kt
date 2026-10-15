@@ -3,6 +3,8 @@ package com.takenakadx.ankihandsfree
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.HapticFeedbackConstants
+import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -75,6 +77,25 @@ class MainActivity : ComponentActivity() {
         super.onStop()
         // 画面が見えないところで勝手に進まないよう、アプリを離れたら学習を止める
         if (!isChangingConfigurations) viewModel.stop()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val up = when (keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP -> true
+            KeyEvent.KEYCODE_VOLUME_DOWN -> false
+            else -> return super.onKeyDown(keyCode, event)
+        }
+        if (!viewModel.volumeKeysActive) return super.onKeyDown(keyCode, event)
+        // 学習中は音量を変えない。長押しのキーリピートは無視（1 回押すごとに 1 操作）
+        if (event.repeatCount == 0 && viewModel.onVolumeKey(up)) {
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        }
+        return true
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        val isVolume = keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+        return if (isVolume && viewModel.volumeKeysActive) true else super.onKeyUp(keyCode, event)
     }
 
     private fun refreshPermissions() {
