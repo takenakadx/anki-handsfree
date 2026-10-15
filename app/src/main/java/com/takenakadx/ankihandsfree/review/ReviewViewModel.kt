@@ -176,7 +176,7 @@ class ReviewViewModel(app: Application) : AndroidViewModel(app) {
             }
             val content = repo.cardContent(card)
             val question = CardText.toSpeech(content.questionHtml, blankWord(cfg().questionLanguage))
-            val answer = CardText.toSpeech(content.answerHtml, blankWord(cfg().answerLanguage))
+            val answer = CardText.answerOnly(content.answerHtml, content.questionHtml, blankWord(cfg().answerLanguage))
             val startedAt = System.currentTimeMillis()
 
             // 前のカードで連打されたボタンを次のカードに持ち越さない

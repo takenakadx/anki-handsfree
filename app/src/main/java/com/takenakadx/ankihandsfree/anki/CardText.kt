@@ -39,6 +39,35 @@ object CardText {
         return s.trim()
     }
 
+    /** 裏面テンプレートの {{FrontSide}} と答えの区切り（<hr id=answer>） */
+    private val answerDivider = Regex("(?i)<hr[^>]*\\bid\\s*=\\s*[\"']?answer[\"']?[^>]*>")
+
+    /**
+     * 裏面から表面の部分を取り除き、答えだけを読み上げ用テキストにする。
+     *
+     * Anki の裏面は「{{FrontSide}}<hr id=answer>答え」の形が多い。AnkiDroid の answer_pure は
+     * 区切りが見つからないと表面ごと返すので、ここでも取り除く。
+     * 1. 区切り線があれば、最後の区切り線より後ろだけを使う
+     * 2. それでも先頭が表面と同じ文章なら、その部分を取り除く
+     */
+    fun answerOnly(answerHtml: String, questionHtml: String, blankWord: String = "ブランク"): String {
+        val afterDivider = answerDivider.findAll(answerHtml).lastOrNull()
+            ?.let { answerHtml.substring(it.range.last + 1) }
+            ?: answerHtml
+        val answer = toSpeech(afterDivider, blankWord)
+        val question = toSpeech(questionHtml, blankWord)
+        if (question.isEmpty() || answer == question) return answer
+        val answerLines = answer.lines()
+        val questionLines = question.lines()
+        if (answerLines.size > questionLines.size && answerLines.take(questionLines.size) == questionLines) {
+            return answerLines.drop(questionLines.size).joinToString("\n").trim()
+        }
+        if (answer.length > question.length && answer.startsWith(question) && answer[question.length].isWhitespace()) {
+            return answer.removePrefix(question).trim()
+        }
+        return answer
+    }
+
     private fun decodeEntities(text: String): String {
         var s = numericEntity.replace(text) { m ->
             val radix = if (m.groupValues[1].isEmpty()) 10 else 16
