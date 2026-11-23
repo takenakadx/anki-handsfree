@@ -193,7 +193,7 @@ private fun SettingsPanel(
                 steps = 17,
             )
         }
-        SwitchRow("音量ボタンで操作する（上: 答え → 正解 / 下: もう一度）", s.volumeKeys) { v ->
+        SwitchRow("音量ボタンで操作する（上: 答え → 正解 / 下: もう一度 / 下長押し: 戻す）", s.volumeKeys) { v ->
             onChange { it.copy(volumeKeys = v) }
         }
         SwitchRow("評価を読み上げて確認する", s.confirmGrade) { v -> onChange { it.copy(confirmGrade = v) } }
@@ -251,6 +251,7 @@ private fun ReviewScreen(state: UiState, onCommand: (VoiceCommand) -> Unit) {
             Text("学習済み ${state.reviewedCount} 枚", style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.weight(1f))
             if (state.listening) Text("🎙️", Modifier.padding(end = 8.dp))
+            TextButton(onClick = { send(VoiceCommand.Undo) }, enabled = state.canUndo) { Text("↩ 戻す") }
             TextButton(onClick = { send(VoiceCommand.Repeat) }) { Text("🔁 再読") }
             TextButton(onClick = { send(VoiceCommand.Stop) }) { Text("⏹ 終了") }
         }
@@ -260,6 +261,8 @@ private fun ReviewScreen(state: UiState, onCommand: (VoiceCommand) -> Unit) {
             Column(Modifier.padding(12.dp).verticalScroll(rememberScrollState())) {
                 if (state.phase == Phase.LOADING) {
                     Text("読み込み中…", style = MaterialTheme.typography.bodyMedium)
+                } else if (state.phase == Phase.LAST_CARD) {
+                    Text("これで最後のカードです。", fontSize = 17.sp)
                 } else {
                     Text(state.question, fontSize = 17.sp)
                     if (state.phase == Phase.ANSWER) {
@@ -278,6 +281,16 @@ private fun ReviewScreen(state: UiState, onCommand: (VoiceCommand) -> Unit) {
         Box(Modifier.fillMaxWidth().weight(0.78f)) {
             if (state.phase == Phase.ANSWER) {
                 GradeZones(volumeHint, onGrade = { send(VoiceCommand.Answer(it)) })
+            } else if (state.phase == Phase.LAST_CARD) {
+                BigButton(
+                    label = "↩ 前のカードに戻す",
+                    sub = if (volumeHint) "画面をタップ / 音量 − 長押し" else "画面をタップ",
+                    color = MaterialTheme.colorScheme.secondary,
+                    enabled = state.canUndo,
+                    modifier = Modifier.fillMaxSize(),
+                    labelSize = 28,
+                    onClick = { send(VoiceCommand.Undo) },
+                )
             } else {
                 BigButton(
                     label = "答えを見る",

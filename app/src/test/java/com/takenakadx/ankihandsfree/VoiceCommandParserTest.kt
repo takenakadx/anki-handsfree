@@ -42,6 +42,13 @@ class VoiceCommandParserTest {
     }
 
     @Test
+    fun undo() {
+        assertEquals(VoiceCommand.Undo, VoiceCommandParser.parse("戻して"))
+        assertEquals(VoiceCommand.Undo, VoiceCommandParser.parse("取り消し"))
+        assertEquals(VoiceCommand.Undo, VoiceCommandParser.parse("Undo"))
+    }
+
+    @Test
     fun navigation() {
         assertEquals(VoiceCommand.ShowAnswer, VoiceCommandParser.parse("答え"))
         assertEquals(VoiceCommand.ShowAnswer, VoiceCommandParser.parse("次"))

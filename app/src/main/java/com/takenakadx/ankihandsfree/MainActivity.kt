@@ -79,23 +79,34 @@ class MainActivity : ComponentActivity() {
         if (!isChangingConfigurations) viewModel.stop()
     }
 
+    // 音量ボタン: 短押しは指を離したとき、長押しは押し続けたときに動く（両方を区別するため）
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        val up = when (keyCode) {
-            KeyEvent.KEYCODE_VOLUME_UP -> true
-            KeyEvent.KEYCODE_VOLUME_DOWN -> false
-            else -> return super.onKeyDown(keyCode, event)
-        }
-        if (!viewModel.volumeKeysActive) return super.onKeyDown(keyCode, event)
-        // 学習中は音量を変えない。長押しのキーリピートは無視（1 回押すごとに 1 操作）
-        if (event.repeatCount == 0 && viewModel.onVolumeKey(up)) {
-            window.decorView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-        }
+        if (!isVolumeKey(keyCode) || !viewModel.volumeKeysActive) return super.onKeyDown(keyCode, event)
+        // 学習中は音量を変えない
+        if (event.repeatCount == 0) event.startTracking()
+        return true
+    }
+
+    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
+        if (!isVolumeKey(keyCode) || !viewModel.volumeKeysActive) return super.onKeyLongPress(keyCode, event)
+        if (viewModel.onVolumeLongPress(up = keyCode == KeyEvent.KEYCODE_VOLUME_UP)) vibrate()
         return true
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        val isVolume = keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
-        return if (isVolume && viewModel.volumeKeysActive) true else super.onKeyUp(keyCode, event)
+        if (!isVolumeKey(keyCode) || !viewModel.volumeKeysActive) return super.onKeyUp(keyCode, event)
+        // 長押しの後に離したときは isCanceled になる
+        if (event.isTracking && !event.isCanceled) {
+            if (viewModel.onVolumeKey(up = keyCode == KeyEvent.KEYCODE_VOLUME_UP)) vibrate()
+        }
+        return true
+    }
+
+    private fun isVolumeKey(keyCode: Int) =
+        keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+
+    private fun vibrate() {
+        window.decorView.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
     }
 
     private fun refreshPermissions() {

@@ -27,7 +27,9 @@ data class DueCard(
     val ord: Int,
     val buttonCount: Int,
     val nextReviewTimes: List<String>,
-)
+) {
+    fun isSameCard(other: DueCard): Boolean = noteId == other.noteId && ord == other.ord
+}
 
 data class CardContent(
     val questionHtml: String,
@@ -76,26 +78,31 @@ class AnkiDroidRepository(context: Context) {
             ?: throw AnkiAccessException("AnkiDroid からデッキを取得できませんでした")
     }
 
-    /** 指定デッキで次に出題されるカード。今日の分が終わっていれば null。 */
-    suspend fun nextDueCard(deckId: Long): DueCard? = withContext(Dispatchers.IO) {
+    /** 指定デッキで次に出題されるカードを最大 [limit] 枚。今日の分が終わっていれば空。 */
+    suspend fun nextDueCards(deckId: Long, limit: Int): List<DueCard> = withContext(Dispatchers.IO) {
         resolver.query(
             FlashCardsContract.ReviewInfo.CONTENT_URI,
             null,
             "limit=?,deckID=?",
-            arrayOf("1", deckId.toString()),
+            arrayOf(limit.toString(), deckId.toString()),
             null,
         )?.use { c ->
-            if (!c.moveToFirst()) return@use null
-            val times = c.stringOrNull(FlashCardsContract.ReviewInfo.NEXT_REVIEW_TIMES)
-                ?.let { runCatching { JSONArray(it) }.getOrNull() }
-                ?.let { arr -> List(arr.length()) { arr.optString(it) } }
-                .orEmpty()
-            DueCard(
-                noteId = c.long(FlashCardsContract.ReviewInfo.NOTE_ID),
-                ord = c.int(FlashCardsContract.ReviewInfo.CARD_ORD),
-                buttonCount = c.int(FlashCardsContract.ReviewInfo.BUTTON_COUNT).takeIf { it > 0 } ?: 4,
-                nextReviewTimes = times,
-            )
+            buildList {
+                while (c.moveToNext()) {
+                    val times = c.stringOrNull(FlashCardsContract.ReviewInfo.NEXT_REVIEW_TIMES)
+                        ?.let { runCatching { JSONArray(it) }.getOrNull() }
+                        ?.let { arr -> List(arr.length()) { arr.optString(it) } }
+                        .orEmpty()
+                    add(
+                        DueCard(
+                            noteId = c.long(FlashCardsContract.ReviewInfo.NOTE_ID),
+                            ord = c.int(FlashCardsContract.ReviewInfo.CARD_ORD),
+                            buttonCount = c.int(FlashCardsContract.ReviewInfo.BUTTON_COUNT).takeIf { it > 0 } ?: 4,
+                            nextReviewTimes = times,
+                        )
+                    )
+                }
+            }
         } ?: throw AnkiAccessException("AnkiDroid のスケジュールを取得できませんでした")
     }
 

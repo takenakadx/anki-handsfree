@@ -6,6 +6,9 @@ sealed interface VoiceCommand {
     data object ShowAnswer : VoiceCommand
     data object Repeat : VoiceCommand
     data object Stop : VoiceCommand
+
+    /** 直前の評価を取り消して、前のカードに戻る */
+    data object Undo : VoiceCommand
     data class Answer(val grade: Grade) : VoiceCommand
 }
 
@@ -21,8 +24,12 @@ object VoiceCommandParser {
         val exact: List<String> = emptyList(),
     )
 
-    // 上から順に評価する（「もう一度読んで」を「もう一度」より先に判定するため Repeat が先頭）。
+    // 上から順に評価する（「もう一度読んで」を「もう一度」より先に判定するため Repeat を Again より前に置く）。
     private val rules = listOf(
+        Rule(
+            VoiceCommand.Undo,
+            contains = listOf("戻して", "もどして", "戻る", "もどる", "取り消", "とりけ", "キャンセル", "undo", "go back", "cancel"),
+        ),
         Rule(
             VoiceCommand.Repeat,
             contains = listOf("読んで", "よんで", "繰り返", "くりかえ", "リピート", "repeat", "pardon", "say again", "聞こえ"),
