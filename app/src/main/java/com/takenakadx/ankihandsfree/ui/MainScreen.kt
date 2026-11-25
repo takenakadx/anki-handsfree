@@ -252,13 +252,24 @@ private fun ReviewScreen(state: UiState, onCommand: (VoiceCommand) -> Unit) {
             Spacer(Modifier.weight(1f))
             if (state.listening) Text("🎙️", Modifier.padding(end = 8.dp))
             TextButton(onClick = { send(VoiceCommand.Undo) }, enabled = state.canUndo) { Text("↩ 戻す") }
-            TextButton(onClick = { send(VoiceCommand.Repeat) }) { Text("🔁 再読") }
             TextButton(onClick = { send(VoiceCommand.Stop) }) { Text("⏹ 終了") }
         }
 
-        // カードの文字は小さめに（確認用）
-        Card(Modifier.fillMaxWidth().weight(0.22f)) {
-            Column(Modifier.padding(12.dp).verticalScroll(rememberScrollState())) {
+        // カードの文字は小さめに（確認用）。エリア全体をタップすると再読み上げ
+        val canRepeat = state.phase == Phase.QUESTION || state.phase == Phase.ANSWER
+        Card(
+            onClick = { send(VoiceCommand.Repeat) },
+            enabled = canRepeat,
+            modifier = Modifier.fillMaxWidth().weight(0.22f),
+        ) {
+            if (canRepeat) {
+                Text(
+                    "🔁 タップで再読",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.align(Alignment.End).padding(top = 6.dp, end = 10.dp),
+                )
+            }
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp).verticalScroll(rememberScrollState())) {
                 if (state.phase == Phase.LOADING) {
                     Text("読み込み中…", style = MaterialTheme.typography.bodyMedium)
                 } else if (state.phase == Phase.LAST_CARD) {
